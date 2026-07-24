@@ -1,5 +1,7 @@
 import time
+
 from datetime import datetime
+
 from pathlib import Path
 
 from app.database_new import (
@@ -11,57 +13,86 @@ from app.database_new import (
 from app.smtp import send_email
 
 
-def get_attachment_path():
+def get_automatic_attachment():
 
-    project_folder = Path(__file__).parent.parent
+    project_folder = (
+        Path(__file__).parent.parent
+    )
 
-    reports_folder = project_folder / "Reports"
+    reports_folder = (
+        project_folder / "Reports"
+    )
 
-    files = list(reports_folder.iterdir())
+    files = list(
+        reports_folder.iterdir()
+    )
 
     if files:
 
-        return str(files[0])
+        return files[0]
 
     return None
 
 
+def archive_file(
+    attachment_path
+):
+
+    project_folder = (
+        Path(__file__).parent.parent
+    )
+
+    archive_folder = (
+        project_folder / "Archive"
+    )
+
+    archive_folder.mkdir(
+        exist_ok=True
+    )
+
+    archive_path = (
+        archive_folder /
+        attachment_path.name
+    )
+
+    attachment_path.rename(
+        archive_path
+    )
+
+
 def scheduler():
 
-    print("Scheduler Started")
+    print(
+        "Scheduler Started"
+    )
 
     while True:
 
         emails = get_pending_emails()
 
-        print("Checking database...")
+        print(
+            "Checking database..."
+        )
 
         current_datetime = datetime.now()
-
-        print(
-            "Current Date:",
-            current_datetime.strftime("%d-%m-%Y")
-        )
-
-        print(
-            "Current Time:",
-            current_datetime.strftime("%H:%M")
-        )
 
         for email in emails:
 
             email_id = email[0]
+
             recipient = email[1]
+
             subject = email[2]
+
             message = email[3]
+
             date = email[4]
+
             scheduled_time = email[5]
+
             attach_document = email[6]
 
-            print("-------------------------")
-
-            print("Database Date:", date)
-            print("Database Time:", scheduled_time)
+            attachment_path = email[7]
 
             scheduled_datetime = datetime.strptime(
                 date + " " + scheduled_time,
@@ -72,32 +103,102 @@ def scheduler():
 
                 try:
 
-                    attachment_path = None
+                    actual_attachment_path = None
 
-                    if attach_document:
 
-                        attachment_path = get_attachment_path()
+                    # No attachment
+
+                    if not attach_document:
+
+                        actual_attachment_path = None
+
+
+                    # Manual attachment
+
+                    elif attachment_path:
+
+                        actual_attachment_path = (
+
+                            Path(__file__).parent.parent /
+
+                            attachment_path
+
+                        )
+
+
+                    # Automatic attachment
+
+                    else:
+
+                        actual_attachment_path = (
+
+                            get_automatic_attachment()
+
+                        )
+
 
                     send_email(
+
                         recipient,
+
                         subject,
+
                         message,
-                        attachment_path
+
+                        actual_attachment_path
+
                     )
 
-                    update_status(email_id)
 
-                    print("Email Sent Successfully")
+                    if actual_attachment_path:
+
+                        archive_file(
+
+                            actual_attachment_path
+
+                        )
+
+
+                    update_status(
+
+                        email_id
+
+                    )
+
+
+                    print(
+
+                        "Email Sent Successfully"
+
+                    )
 
                 except Exception as e:
 
-                    print("SMTP Error:", e)
+                    print(
 
-                    update_status_failed(email_id)
+                        "SMTP Error:",
 
-                    print("Email Sending Failed")
+                        e
 
-        time.sleep(60)
+                    )
+
+                    update_status_failed(
+
+                        email_id
+
+                    )
+
+                    print(
+
+                        "Email Sending Failed"
+
+                    )
+
+        time.sleep(
+
+            60
+
+        )
 
 
 if __name__ == "__main__":

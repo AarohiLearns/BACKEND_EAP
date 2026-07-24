@@ -13,15 +13,19 @@ def send_email(
 ):
 
     smtp_host = "smtp.gmail.com"
+
     smtp_port = 587
 
-    sender = "YOUR_EMAIL_ID"
+    sender = "YOUR_USER_ID"
+
     password = "YOUR_APP_PASSWORD"
 
     msg = MIMEMultipart()
 
     msg["Subject"] = subject
+
     msg["From"] = sender
+
     msg["To"] = recipient
 
     msg.attach(
@@ -39,7 +43,7 @@ def send_email(
                 file.read()
             )
 
-        filename = attachment_path.split("/")[-1]
+        filename = attachment_path.name
 
         attachment.add_header(
             "Content-Disposition",
@@ -47,7 +51,9 @@ def send_email(
             filename=filename
         )
 
-        msg.attach(attachment)
+        msg.attach(
+            attachment
+        )
 
     server = smtplib.SMTP(
         smtp_host,

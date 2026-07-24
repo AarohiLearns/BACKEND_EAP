@@ -1,17 +1,25 @@
 import sqlite3
+
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).parent.parent
+
 DATA_DIR = BASE_DIR / "data"
 
 EMAILS_DB = DATA_DIR / "emails_new.db"
+
 TEMPLATES_DB = DATA_DIR / "templates.db"
 
 
-def send_to_sql(data):
+def send_to_sql(
+    data,
+    attachment_path=None
+):
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -24,6 +32,7 @@ def send_to_sql(data):
         date TEXT,
         time TEXT,
         attach_document INTEGER,
+        attachment_path TEXT,
         status TEXT
     )
     """)
@@ -36,17 +45,23 @@ def send_to_sql(data):
         date,
         time,
         attach_document,
+        attachment_path,
         status
     )
-    VALUES(?,?,?,?,?,?,?)
+    VALUES(?,?,?,?,?,?,?,?)
     """,
     (
         data.recipient,
         data.subject,
         data.message,
-        data.date.strftime("%d-%m-%Y"),
-        data.time.strftime("%H:%M"),
+        data.date.strftime(
+            "%d-%m-%Y"
+        ),
+        data.time.strftime(
+            "%H:%M"
+        ),
         data.attach_document,
+        attachment_path,
         "Pending"
     ))
 
@@ -57,27 +72,33 @@ def send_to_sql(data):
 
 def get_pending_emails():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT * FROM emails
+    SELECT *
+    FROM emails
     WHERE status='Pending'
     """)
 
     emails = cursor.fetchall()
-
-    print("Pending Emails:", emails)
+    print("Pending emails:", emails)
 
     conn.close()
 
     return emails
 
 
-def update_status(email_id):
+def update_status(
+    email_id
+):
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -85,18 +106,21 @@ def update_status(email_id):
     UPDATE emails
     SET status='Sent'
     WHERE id=?
-    """, (email_id,))
+    """,
+    (email_id,))
 
     conn.commit()
-
-    print(f"Email {email_id} marked as Sent")
 
     conn.close()
 
 
-def update_status_failed(email_id):
+def update_status_failed(
+    email_id
+):
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -104,47 +128,45 @@ def update_status_failed(email_id):
     UPDATE emails
     SET status='Failed'
     WHERE id=?
-    """, (email_id,))
+    """,
+    (email_id,))
 
     conn.commit()
-
-    print(f"Email {email_id} marked as Failed")
 
     conn.close()
 
 
-def store_to_sql(template_data, attachment_path):
+def store_to_sql(
+    template_data
+):
 
-    conn = sqlite3.connect(TEMPLATES_DB)
+    conn = sqlite3.connect(
+        TEMPLATES_DB
+    )
 
     cursor = conn.cursor()
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS templates(
-        template_id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         subject TEXT NOT NULL,
-        body TEXT NOT NULL,
-        attachment_path TEXT
+        body TEXT NOT NULL
     )
     """)
 
     cursor.execute("""
     INSERT INTO templates(
-        template_id,
         name,
         subject,
-        body,
-        attachment_path
+        body
     )
-    VALUES(?,?,?,?,?)
+    VALUES(?,?,?)
     """,
     (
-        template_data.template_id,
         template_data.name,
         template_data.subject,
-        template_data.body,
-        attachment_path
+        template_data.body
     ))
 
     conn.commit()
@@ -152,50 +174,35 @@ def store_to_sql(template_data, attachment_path):
     conn.close()
 
 
-def retreive_templates(template_id):
+def retreive_templates(
+    template_id
+):
 
-    conn = sqlite3.connect(TEMPLATES_DB)
+    conn = sqlite3.connect(
+        TEMPLATES_DB
+    )
 
     cursor = conn.cursor()
 
     cursor.execute("""
     SELECT subject, body
     FROM templates
-    WHERE template_id = ?
-    """, (template_id,))
+    WHERE id=?
+    """,
+    (template_id,))
 
-    get_template = cursor.fetchone()
-
-    conn.close()
-
-    return get_template
-
-
-def get_attachment_path(template_id):
-
-    conn = sqlite3.connect(TEMPLATES_DB)
-
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT attachment_path
-    FROM templates
-    WHERE template_id = ?
-    """, (template_id,))
-
-    attachment = cursor.fetchone()
+    template = cursor.fetchone()
 
     conn.close()
 
-    if attachment:
-        return attachment[0]
-
-    return None
+    return template
 
 
 def failed_emails_count():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -214,7 +221,9 @@ def failed_emails_count():
 
 def sent_emails_count():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -233,18 +242,19 @@ def sent_emails_count():
 
 def get_sent_emails():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT * FROM emails
+    SELECT *
+    FROM emails
     WHERE status='Sent'
     """)
 
     emails = cursor.fetchall()
-
-    print("Sent emails are", emails)
 
     conn.close()
 
@@ -253,7 +263,9 @@ def get_sent_emails():
 
 def get_totalemails_count():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -271,7 +283,9 @@ def get_totalemails_count():
 
 def scheduled_emails_count():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
@@ -290,12 +304,15 @@ def scheduled_emails_count():
 
 def get_allemails():
 
-    conn = sqlite3.connect(EMAILS_DB)
+    conn = sqlite3.connect(
+        EMAILS_DB
+    )
 
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT * FROM emails
+    SELECT *
+    FROM emails
     """)
 
     rows = cursor.fetchall()
