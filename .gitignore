@@ -1,7 +1,10 @@
-app/checkcwd.py
-app/email_sender_new.py
+# Python
 __pycache__/
 *.pyc
 
-# Ignore all SQLite databases
+# Databases
 *.db
+
+# Other files
+app/checkcwd.py
+app/email_sender_new.py
