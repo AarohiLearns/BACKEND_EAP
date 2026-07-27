@@ -2,3 +2,6 @@ app/checkcwd.py
 app/email_sender_new.py
 __pycache__/
 *.pyc
+
+# Ignore all SQLite databases
+*.db

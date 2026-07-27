@@ -6,21 +6,35 @@ from pydantic import BaseModel, EmailStr
 class EmailRequest(BaseModel):
 
     recipient: EmailStr
+
     subject: str
+
     message: str
-    date: date
-    time: time
+
     attach_document: bool = False
+
     attachment_filename: str | None = None
 
+    start_date: date
 
-class TemplateRequest(BaseModel):
+    end_date: date | None = None
 
-    name: str
-    subject: str
-    body: str
+    time: time
+
+    repeat_interval: str
+
+    max_occurrences: int | None = None
 
 
 class AttachmentRequest(BaseModel):
 
     attachment_filename: str
+
+
+class TemplateRequest(BaseModel):
+
+    name: str
+
+    subject: str
+
+    body: str
