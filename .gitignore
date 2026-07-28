@@ -5,6 +5,9 @@ __pycache__/
 # Databases
 *.db
 
+# Secrets
+data/secret.key
+
 # Other files
 app/checkcwd.py
 app/email_sender_new.py

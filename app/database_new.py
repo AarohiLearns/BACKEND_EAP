@@ -56,9 +56,97 @@ def create_emails_table():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS smtp_settings(
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        smtp_host TEXT,
+
+        smtp_port TEXT,
+
+        sender TEXT,
+
+        encrypted_password TEXT,
+
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+
+    )
+    """)
+
     conn.commit()
 
     conn.close()
+
+
+def save_smtp_settings(smtp_host, smtp_port, sender, plain_password):
+    """
+    Encrypts the password using security.encrypt() and stores/updates
+    the single SMTP settings row. Only one row is kept -- if settings
+    already exist, they are replaced rather than duplicated.
+    """
+
+    from app.security import encrypt
+
+    create_emails_table()
+
+    encrypted_password = encrypt(plain_password)
+
+    conn = sqlite3.connect(EMAILS_DB)
+
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM smtp_settings ORDER BY id DESC LIMIT 1")
+
+    existing = cursor.fetchone()
+
+    if existing:
+
+        cursor.execute("""
+        UPDATE smtp_settings
+        SET smtp_host=?, smtp_port=?, sender=?, encrypted_password=?
+        WHERE id=?
+        """,
+        (smtp_host, str(smtp_port), sender, encrypted_password, existing[0]))
+
+    else:
+
+        cursor.execute("""
+        INSERT INTO smtp_settings(smtp_host, smtp_port, sender, encrypted_password)
+        VALUES(?,?,?,?)
+        """,
+        (smtp_host, str(smtp_port), sender, encrypted_password))
+
+    conn.commit()
+
+    conn.close()
+
+
+def get_smtp_settings():
+    """
+    Returns the most recent SMTP settings row as a tuple:
+    (id, smtp_host, smtp_port, sender, encrypted_password, created_at)
+    or None if not configured yet.
+    """
+
+    create_emails_table()
+
+    conn = sqlite3.connect(EMAILS_DB)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT id, smtp_host, smtp_port, sender, encrypted_password, created_at
+    FROM smtp_settings
+    ORDER BY id DESC
+    LIMIT 1
+    """)
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result
 
 
 def send_to_sql(

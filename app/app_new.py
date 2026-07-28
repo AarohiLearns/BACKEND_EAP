@@ -3,7 +3,8 @@ from fastapi import FastAPI
 from app.models_new import (
     EmailRequest,
     TemplateRequest,
-    AttachmentRequest
+    AttachmentRequest,
+    SmtpSettingsRequest
 )
 
 from pathlib import Path
@@ -18,7 +19,9 @@ from app.database_new import (
     get_totalemails_count,
     sent_emails_count,
     failed_emails_count,
-    get_pending_emails
+    get_pending_emails,
+    save_smtp_settings,
+    get_smtp_settings
 )
 
 
@@ -154,6 +157,40 @@ def get_failed_count():
     failed_count = failed_emails_count()
 
     return {"failed_count": failed_count}
+
+
+@app.post("/smtp-settings")
+def set_smtp_settings(data: SmtpSettingsRequest):
+
+    save_smtp_settings(
+        data.smtp_host,
+        data.smtp_port,
+        data.sender,
+        data.password
+    )
+
+    return {
+        "message": "SMTP settings saved successfully"
+    }
+
+
+@app.get("/smtp-settings/status")
+def check_smtp_settings():
+
+    settings = get_smtp_settings()
+
+    if settings is None:
+
+        return {
+            "configured": False
+        }
+
+    return {
+        "configured": True,
+        "smtp_host": settings[1],
+        "smtp_port": settings[2],
+        "sender": settings[3]
+    }
 
 
 @app.post("/templates")

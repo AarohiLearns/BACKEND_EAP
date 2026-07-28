@@ -6,7 +6,13 @@ from email.mime.multipart import MIMEMultipart
 
 from email.mime.text import MIMEText
 
-from email.mime.application import MIMEApplication
+from email.mime.base import MIMEBase
+
+from email import encoders
+
+from app import database_new as database
+
+from app.security import decrypt
 
 
 def send_email(
@@ -15,6 +21,17 @@ def send_email(
     message,
     attachment_path=None
 ):
+    """
+    Sends an email using SMTP credentials stored (encrypted) in the
+    database via database_new.get_smtp_settings(), matching the
+    approach used in the teammate's version of this file.
+
+    Kept the same single-attachment signature as the rest of this
+    codebase (scheduler_new.py passes one Path or None) -- internally
+    this is converted to a one-item list so the attaching logic can
+    stay close to the teammate's multi-attachment-capable style,
+    making it easy to extend to multiple attachments later if needed.
+    """
 
     print()
     print("========== SMTP START ==========")
@@ -22,12 +39,27 @@ def send_email(
     print("Subject:", subject)
     print("Attachment path:", attachment_path)
 
-    smtp_host = "smtp.gmail.com"
-    smtp_port = 587
-    sender = "YOUR_USER_ID"
-    password = "YOUR_APP_PASSWORD"
+    settings = database.get_smtp_settings()
+
+    if settings is None:
+        raise Exception(
+            "SMTP settings not found. Please configure SMTP "
+            "settings first (see /smtp-settings endpoint)."
+        )
+
+    print("SMTP Settings (id/host/port/sender):", settings[:4])
+
+    if len(settings) == 6:
+        _, smtp_host, smtp_port, sender, encrypted_password, created_at = settings
+    elif len(settings) == 5:
+        _, smtp_host, smtp_port, sender, encrypted_password = settings
+    else:
+        raise Exception(f"Unexpected SMTP settings format: {settings}")
+
+    password = decrypt(encrypted_password)
 
     msg = MIMEMultipart()
+
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = recipient
@@ -36,61 +68,100 @@ def send_email(
 
     if attachment_path:
 
+        attachment_path = Path(attachment_path)
+
         print("Opening attachment:", attachment_path)
 
-        with open(attachment_path, "rb") as file:
-            attachment = MIMEApplication(file.read())
+        if attachment_path.exists():
 
-        filename = Path(attachment_path).name
+            with open(attachment_path, "rb") as file:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(file.read())
 
-        attachment.add_header(
-            "Content-Disposition",
-            "attachment",
-            filename=filename
-        )
+            encoders.encode_base64(part)
 
-        msg.attach(attachment)
+            filename = attachment_path.name
 
-        print("Attachment added:", filename)
+            part.add_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"'
+            )
+
+            msg.attach(part)
+
+            print("Attachment added:", filename)
+
+        else:
+
+            print("File NOT found:", attachment_path)
+
+            raise FileNotFoundError(
+                f"Attachment file not found: {attachment_path}"
+            )
 
     print("Connecting to SMTP server...")
 
-    server = smtplib.SMTP(smtp_host, smtp_port)
+    try:
 
-    print("SMTP connection created.")
+        server = smtplib.SMTP(smtp_host, int(smtp_port))
 
-    server.ehlo()
+        print("SMTP connection created.")
 
-    print("EHLO completed.")
+        server.ehlo()
 
-    server.starttls()
+        print("EHLO completed.")
 
-    print("TLS started.")
+        server.starttls()
 
-    server.ehlo()
+        print("TLS started.")
 
-    print("Second EHLO completed.")
+        server.ehlo()
 
-    print("Attempting SMTP login...")
+        print("Second EHLO completed.")
 
-    server.login(sender, password)
+        print("Attempting SMTP login...")
 
-    print("SMTP login successful.")
+        server.login(sender, password)
 
-    print("Sending email...")
+        print("SMTP login successful.")
 
-    result = server.sendmail(
-        sender,
-        recipient,
-        msg.as_string()
-    )
+        print("Sending email...")
 
-    print("sendmail() returned:", result)
+        result = server.sendmail(
+            sender,
+            recipient,
+            msg.as_string()
+        )
 
-    print("SMTP server accepted the email.")
+        print("sendmail() returned:", result)
 
-    server.quit()
+        print("SMTP server accepted the email.")
 
-    print("SMTP connection closed.")
+        server.quit()
 
-    print("=========== SMTP END ===========")
+        print("SMTP connection closed.")
+
+        print("=========== SMTP END ===========")
+
+    except smtplib.SMTPAuthenticationError:
+
+        raise Exception(
+            "SMTP Authentication Failed. "
+            "Please check your email and app password in SMTP settings."
+        )
+
+    except smtplib.SMTPConnectError:
+
+        raise Exception(
+            "Unable to connect to SMTP server."
+        )
+
+    except smtplib.SMTPRecipientsRefused:
+
+        raise Exception(
+            "Recipient email address was rejected."
+        )
+
+    except Exception as e:
+
+        raise Exception(str(e))

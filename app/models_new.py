@@ -38,3 +38,14 @@ class TemplateRequest(BaseModel):
     subject: str
 
     body: str
+
+
+class SmtpSettingsRequest(BaseModel):
+
+    smtp_host: str
+
+    smtp_port: int
+
+    sender: EmailStr
+
+    password: str
