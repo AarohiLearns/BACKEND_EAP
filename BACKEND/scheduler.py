@@ -1,278 +1,206 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
-from smtp import send_email
-
-from models import (
-    EmailRequest,
-    SendNowRequest,
-    TemplateRequest,
-    SMTPRequest,
-)
+import json
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from database import (
-    create_email_table,
-    create_smtp_table,
-    delete_template,
-    email_to_dict,
-    failed_emails_count,
-    get_all_templates,
-    get_allemails,
-    get_failed_emails,
+    create_next_recurring_email,
     get_pending_emails,
-    get_sent_emails,
-    get_smtp_settings,
-    get_totalemails_count,
-    retrieve_templates,
-    save_email,
-    save_smtp_settings,
-    scheduled_emails_count,
-    search_templates,
-    send_to_sql,
-    sent_emails_count,
-    store_to_sql,
-    update_template,
+    update_attachment_details,
+    update_status,
 )
-
-app = FastAPI()
-
-create_email_table()
-create_smtp_table()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5000",
-        "http://localhost:5000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+from attachment_manager import (
+    archive_file,
+    get_automatic_attachment,
+    resolve_attachment_path,
+    resolve_next_attachment,
 )
+from smtp import send_email
+
+BASE_DIR = Path(__file__).parent
 
 
-@app.post("/emails")
-def schedule(data: EmailRequest):
-    send_to_sql(data)
-
-    print("EMAIL RECEIVED")
-    print(data)
-
-    return {"message": "Email Scheduled Successfully"}
-
-
-@app.post("/emails/send_now")
-def send_now(data: SendNowRequest):
-    try:
-        send_email(
-            data.recipient,
-            data.subject,
-            data.message,
-            data.attachments,
-        )
-
-        save_email(data, status="Sent")
-
-        return {"message": "Email Sent Successfully"}
-
-    except Exception as e:
-        save_email(data, status="Failed", error=str(e))
-
-        raise HTTPException(status_code=500, detail=str(e))
+def calculate_next_datetime(scheduled_datetime, repeat_interval):
+    if repeat_interval == "Hourly":
+        return scheduled_datetime + timedelta(hours=1)
+    elif repeat_interval == "Daily":
+        return scheduled_datetime + timedelta(days=1)
+    elif repeat_interval == "Weekly":
+        return scheduled_datetime + timedelta(weeks=1)
+    else:
+        try:
+            minutes = int(repeat_interval)
+            if minutes >= 15:
+                return scheduled_datetime + timedelta(minutes=minutes)
+        except ValueError:
+            return None
+    return None
 
 
-@app.get("/emails")
-def callallemails():
-    all_emails = get_allemails()
-    total_emails = get_totalemails_count()
+def scheduler():
+    print("Scheduler Started")
 
-    return {"emails": all_emails, "total_emails": total_emails}
+    while True:
+        emails = get_pending_emails()
+        print("Checking database...")
 
+        current_datetime = datetime.now()
+        print(f"Current Date: {current_datetime.strftime('%d-%m-%Y')}")
+        print(f"Current Time: {current_datetime.strftime('%H:%M')}")
 
-@app.get("/dashboard")
-def dashboard():
-    return {
-        "scheduled": scheduled_emails_count(),
-        "sent": sent_emails_count(),
-        "failed": failed_emails_count(),
-        "templates": len(get_all_templates()),
-    }
+        for email in emails:
+            email_id = email[0]
+            recipient = email[1]
+            subject = email[2]
+            message = email[3]
+            date = email[4]
+            end_date = email[5]
+            scheduled_time = email[6]
+            status = email[7]
+            error = email[8]
+            attachments = json.loads(email[9]) if email[9] else []
 
+            resolved_attachments = []
+            for attachment in attachments:
+                resolved_path = resolve_attachment_path(attachment)
+                if resolved_path:
+                    resolved_attachments.append(str(resolved_path))
+                    print(f"Manual attachment resolved: {resolved_path}")
+                else:
+                    print(f"Manual attachment NOT found: {attachment}")
 
-@app.get("/emails/scheduled")
-def callpendingemails():
-    pending = get_pending_emails()
+            attachments = resolved_attachments
+            repeat_interval = email[10]
+            attach_document = email[11]
+            attachment_path = email[12]
+            attachment_filename = email[13]
+            attachment_status = email[14]
 
-    emails = [email_to_dict(email) for email in pending]
+            actual_attachment_path = None
+            next_attachment_before_archive = None
 
-    return {"emails": emails}
+            max_occurrences = email[15]
+            occurrence_count = email[16]
 
+            print("-------------------------")
+            print(f"Database Date: {date}")
+            print(f"Database Time: {scheduled_time}")
 
-@app.get("/emails/sent")
-def callsent_emails():
-    sent = get_sent_emails()
+            scheduled_datetime = datetime.strptime(
+                f"{date} {scheduled_time}", "%d-%m-%Y %H:%M"
+            )
 
-    emails = [email_to_dict(email) for email in sent]
+            if current_datetime >= scheduled_datetime:
+                try:
+                    # Attach automatic document only if no manual attachments exist
+                    if attach_document and not resolved_attachments:
+                        if attachment_path:
+                            actual_attachment_path = BASE_DIR / attachment_path
+                        else:
+                            automatic_report = get_automatic_attachment()
+                            print(f"Automatic report: {automatic_report}")
+                            if automatic_report:
+                                actual_attachment_path = automatic_report
 
-    return {"emails": emails}
+                        if actual_attachment_path:
+                            attachments.append(str(actual_attachment_path))
+                            print(f"Attachments being sent: {attachments}")
 
+                    send_email(recipient, subject, message, attachments)
 
-@app.get("/emails/failed")
-def callfailed_emails():
-    failed = get_failed_emails()
+                    update_status(email_id, "Sent", None)
+                    print("Email Sent Successfully")
 
-    emails = [email_to_dict(email) for email in failed]
+                    if attach_document and actual_attachment_path:
+                        next_attachment_before_archive = resolve_next_attachment(
+                            Path(actual_attachment_path).name
+                        )
 
-    return {"emails": emails}
+                    # Archive manually attached files after successful sending
+                    for manual_attachment in resolved_attachments:
+                        manual_path = Path(manual_attachment)
 
+                        # Do not archive the same file twice if it is also the automatic attachment
+                        if actual_attachment_path and manual_path.resolve() == Path(
+                            actual_attachment_path
+                        ).resolve():
+                            continue
 
-@app.post("/templates")
-def store_templates(template_data: TemplateRequest):
-    store_to_sql(template_data)
+                        if manual_path.exists():
+                            archive_file(manual_path)
+                            print(f"Manual attachment archived: {manual_path}")
 
-    return {"message": "Templates saved successfully"}
+                    # Archive automatic attachment
+                    if attach_document and actual_attachment_path:
+                        update_attachment_details(
+                            email_id,
+                            str(actual_attachment_path),
+                            Path(actual_attachment_path).name,
+                            "Automatic" if not attachment_filename else attachment_status,
+                        )
+                        archive_file(Path(actual_attachment_path))
+                        print(f"Automatic attachment archived: {actual_attachment_path}")
 
+                    if repeat_interval and repeat_interval != "Never":
+                        try:
+                            if max_occurrences is not None:
+                                if occurrence_count >= max_occurrences:
+                                    print("Maximum occurrences reached")
+                                    continue
 
-@app.get("/templates/search")
-def search_template(keyword: str):
-    result = search_templates(keyword)
+                            next_datetime = calculate_next_datetime(
+                                scheduled_datetime, repeat_interval
+                            )
 
-    return result
+                            if next_datetime is None:
+                                print("Repeat stopped: Invalid repeat interval")
+                                continue
 
+                            if end_date:
+                                end_datetime = datetime.strptime(
+                                    f"{end_date} 23:59", "%d-%m-%Y %H:%M"
+                                )
 
-@app.get("/templates/{id}")
-def get_stored_templates(id: int):
-    get_template = retrieve_templates(id)
+                                if next_datetime > end_datetime:
+                                    print("Repeat stopped: End date reached")
+                                    continue
 
-    return {
-        "id": get_template[0],
-        "name": get_template[1],
-        "subject": get_template[2],
-        "body": get_template[3],
-        "last_edited": get_template[4],
-    }
+                            if next_attachment_before_archive:
+                                new_email_id = create_next_recurring_email(
+                                    email,
+                                    str(next_attachment_before_archive),
+                                    next_attachment_before_archive.name,
+                                    "Automatic",
+                                    next_datetime.strftime("%d-%m-%Y"),
+                                    next_datetime.strftime("%H:%M"),
+                                    occurrence_count + 1,
+                                )
+                            else:
+                                new_email_id = create_next_recurring_email(
+                                    email,
+                                    None,
+                                    None,
+                                    None,
+                                    next_datetime.strftime("%d-%m-%Y"),
+                                    next_datetime.strftime("%H:%M"),
+                                    occurrence_count + 1,
+                                )
 
+                            print(f"Next recurring email created. ID: {new_email_id}")
+                            print(email)
+                            print(new_email_id)
 
-@app.get("/templates")
-def get_templates():
-    templates = get_all_templates()
-    return templates
+                        except Exception as e:
+                            print(f"Recurring Creation Error (Scheduler Error): {e}")
+                            update_status(email_id, "Failed", str(e))
 
+                except Exception as e:
+                    print(f"SMTP Error: {e}")
+                    update_status(email_id, "Failed", str(e))
+                    print("Email Sending Failed")
 
-@app.delete("/templates/{id}")
-def remove_template(id: int):
-    delete_template(id)
-
-    return {"message": "Template deleted successfully"}
-
-
-@app.put("/templates/{id}")
-def edit_template(id: int, template_data: TemplateRequest):
-    update_template(template_data, id)
-
-    return {"message": "Template updated successfully"}
-
-
-@app.get("/calendar/events")
-def calendar_events():
-    pending = get_pending_emails()
-    sent = get_sent_emails()
-    failed = get_failed_emails()
-
-    events = []
-
-    # 0 → id
-    # 1 → recipient
-    # 2 → subject
-    # 3 → message
-    # 4 → date
-    # 5 → end_date
-    # 6 → time
-    # 7 → status
-    # 8 → error
-    # 9 → attachments
-    # 10 → repeat_interval
-    # 11 → attach_document
-    # 12 → attachment_path
-    # 13 → attachment_filename
-    # 14 → attachment_status
-    # 15 → max_occurrences
-    # 16 → occurrence_count
-
-    # Pending Emails (Yellow)
-    for email in pending:
-        dt = datetime.strptime(f"{email[4]} {email[6]}", "%d-%m-%Y %H:%M")
-
-        events.append(
-            {
-                "title": email[2],
-                "start": dt.isoformat(),  # converts datetime object to ISO format for FullCalendar to use
-                "backgroundColor": "#ffc107",
-                "borderColor": "#ffc107",
-                "textColor": "#000000",
-                "recipient": email[1],
-                "status": email[7],
-                "error": email[8],
-            }
-        )
-
-    # Sent Emails (Green)
-    for email in sent:
-        dt = datetime.strptime(f"{email[4]} {email[6]}", "%d-%m-%Y %H:%M")
-
-        events.append(
-            {
-                "title": email[2],
-                "start": dt.isoformat(),
-                "backgroundColor": "#198754",
-                "borderColor": "#198754",
-                "recipient": email[1],
-                "status": email[7],
-                "error": email[8],
-            }
-        )
-
-    # Failed Emails (Red)
-    for email in failed:
-        dt = datetime.strptime(f"{email[4]} {email[6]}", "%d-%m-%Y %H:%M")
-
-        events.append(
-            {
-                "title": email[2],
-                "start": dt.isoformat(),
-                "backgroundColor": "#dc3545",
-                "borderColor": "#dc3545",
-                "recipient": email[1],
-                "status": email[7],
-                "error": email[8],
-            }
-        )
-
-    return events
+        time.sleep(30)
 
 
-@app.post("/smtp_settings")
-def save_settings(data: SMTPRequest):
-    save_smtp_settings(
-        data.smtp_host,
-        data.smtp_port,
-        data.sender_email,
-        data.app_password,
-    )
-
-    return {"message": "SMTP Settings Saved Successfully"}
-
-
-@app.get("/smtp_settings")
-def get_settings():
-    settings = get_smtp_settings()
-
-    if settings is None:
-        return {}
-
-    return {
-        "smtp_host": settings[1],
-        "smtp_port": settings[2],
-        "sender_email": settings[3],
-        "app_password": settings[4],
-    }
+if __name__ == "__main__":
+    scheduler()
