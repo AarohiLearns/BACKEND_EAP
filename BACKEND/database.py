@@ -1,1 +1,614 @@
+import json
+import sqlite3
+import os
+from datetime import datetime
 
+from security import encrypt
+
+# --- SET UP DATA DIRECTORY PATHS ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "Data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+EMAILS_DB_PATH = os.path.join(DATA_DIR, "emails.db")
+TEMPLATES_DB_PATH = os.path.join(DATA_DIR, "templates.db")
+# -----------------------------------
+
+
+def create_email_table():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS emails(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient TEXT,
+            subject TEXT,
+            message TEXT,
+            date TEXT,
+            end_date TEXT,
+            time TEXT,
+            status TEXT,
+            error TEXT,
+            attachments TEXT,
+            repeat_interval TEXT,
+            attach_document INTEGER,
+            attachment_path TEXT,
+            attachment_filename TEXT,
+            attachment_status TEXT,
+            max_occurrences INTEGER,
+            occurrence_count INTEGER DEFAULT 1
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def send_to_sql(
+    data,
+    attachment_path=None,
+    attachment_filename=None,
+    attachment_status=None,
+):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO emails(
+            recipient,
+            subject,
+            message,
+            date,
+            end_date,
+            time,
+            status,
+            attachments,
+            repeat_interval,
+            attach_document,
+            attachment_path,
+            attachment_filename,
+            attachment_status,
+            max_occurrences,
+            occurrence_count
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            data.recipient,
+            data.subject,
+            data.message,
+            data.date.strftime("%d-%m-%Y"),
+            data.end_date.strftime("%d-%m-%Y") if data.end_date else None,
+            data.time.strftime("%H:%M"),
+            "Pending",
+            json.dumps(data.attachments),
+            data.repeat_interval,
+            int(getattr(data, "attach_document", False)),
+            attachment_path,
+            attachment_filename,
+            attachment_status,
+            data.max_occurrences,
+            1,
+        ),
+    )
+
+    print("Email saved successfully!")
+    print(data)
+
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return new_id
+
+
+def create_next_recurring_email(
+    email,
+    next_attachment_path,
+    next_attachment_filename,
+    next_attachment_status,
+    next_date,
+    next_time,
+    next_occurrence_count,
+):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO emails(
+            recipient,
+            subject,
+            message,
+            date,
+            end_date,
+            time,
+            status,
+            error,
+            attachments,
+            repeat_interval,
+            attach_document,
+            attachment_path,
+            attachment_filename,
+            attachment_status,
+            max_occurrences,
+            occurrence_count
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            email[1],  # recipient
+            email[2],  # subject
+            email[3],  # message
+            next_date,  # new date
+            email[5],  # end_date (index 5, NOT 9)
+            next_time,  # new time
+            "Pending",  # new status
+            None,  # error
+            "[]",  # attachments -- deliberately NOT carried forward.
+            # Manual "attachments" list files are one-time-use and already
+            # archived after the occurrence that sent them; carrying the
+            # stale JSON reference into the next row made later occurrences
+            # try (and fail) to re-find an already-archived file, producing
+            # an empty email. Recurring continuation is handled entirely via
+            # attachment_path/attachment_filename (next_attachment_path args
+            # above), not this field.
+            email[10],  # repeat_interval
+            email[11],  # attach_document
+            next_attachment_path,
+            next_attachment_filename,
+            next_attachment_status,
+            email[15],  # max_occurrences
+            next_occurrence_count,
+        ),
+    )
+
+    new_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return new_id
+
+
+def update_attachment_details(
+    email_id, attachment_path, attachment_filename, attachment_status
+):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE emails
+        SET attachment_path=?, attachment_filename=?, attachment_status=?
+        WHERE id=?
+        """,
+        (attachment_path, attachment_filename, attachment_status, email_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def save_email(data, status, error=None):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO emails(recipient, subject, message, date, time, status, error, attachments)
+        VALUES(?,?,?,?,?,?,?,?)
+        """,
+        (
+            data.recipient,
+            data.subject,
+            data.message,
+            datetime.now().strftime("%d-%m-%Y"),
+            datetime.now().strftime("%H:%M"),
+            status,
+            error,
+            json.dumps(data.attachments),
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_emails():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM emails
+        WHERE status='Pending'
+        ORDER BY id DESC
+        """
+    )
+
+    emails = cursor.fetchall()
+    print("Pending Emails:", emails)
+
+    conn.close()
+    return emails
+
+
+def update_status(email_id, status, error=None):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE emails
+        SET status=?, error=?
+        WHERE id=?
+        """,
+        (status, error, email_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def email_to_dict(email):
+ 
+    return {
+        "id": email[0],
+        "recipient": email[1],
+        "subject": email[2],
+        "message": email[3],
+        "date": email[4],
+        "end_date": email[5],
+        "time": email[6],
+        "status": email[7],
+        "error": email[8],
+        "attachments": json.loads(email[9]) if email[9] else [],
+        "repeat_interval": email[10],
+        "attach_document": email[11],
+        "attachment_path": email[12],
+        "attachment_filename": email[13],
+        "attachment_status": email[14],
+        "max_occurrences": email[15],
+        "occurrence_count": email[16]
+    }
+def create_templates_table():
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            last_edited TEXT
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+def store_to_sql(template_data):
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO templates(name, subject, body, last_edited)
+        VALUES(?,?,?,?)
+        """,
+        (
+            template_data.name,
+            template_data.subject,
+            template_data.body,
+            template_data.last_edited,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def retrieve_templates(id):
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM templates
+        WHERE id = ?
+        """,
+        (id,),
+    )
+
+    get_template = cursor.fetchone()
+
+    conn.close()
+    return get_template
+
+
+def get_all_templates():
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM templates
+        ORDER BY id
+        """
+    )
+
+    templates = cursor.fetchall()
+
+    conn.close()
+    return [dict(template) for template in templates]
+
+
+def search_templates(keyword):
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM templates
+        WHERE
+            name LIKE ?
+            OR subject LIKE ?
+            OR body LIKE ?
+        """,
+        (
+            f"%{keyword}%",
+            f"%{keyword}%",
+            f"%{keyword}%",
+        ),
+    )
+
+    result = cursor.fetchall()
+
+    conn.close()
+    return [dict(template) for template in result]
+
+
+def delete_template(id):
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM templates
+        WHERE id=?
+        """,
+        (id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def update_template(template_data, id):
+    conn = sqlite3.connect(TEMPLATES_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE templates
+        SET
+            name=?,
+            subject=?,
+            body=?,
+            last_edited=?
+        WHERE id=?
+        """,
+        (
+            template_data.name,
+            template_data.subject,
+            template_data.body,
+            template_data.last_edited,
+            id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def failed_emails_count():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(status)
+        FROM emails
+        WHERE status='Failed'
+        """
+    )
+
+    failed = cursor.fetchone()[0]
+
+    conn.close()
+    return failed
+
+
+def sent_emails_count():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(status)
+        FROM emails
+        WHERE status = 'Sent'
+        """
+    )
+
+    sent = cursor.fetchone()[0]
+
+    conn.close()
+    return sent
+
+
+def get_sent_emails():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM emails
+        WHERE status='Sent'
+        ORDER BY id DESC
+        """
+    )
+
+    emails = cursor.fetchall()
+    print("Sent emails are", emails)
+
+    conn.close()
+    return emails
+
+
+def get_failed_emails():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM emails
+        WHERE status='Failed'
+        ORDER BY id DESC
+        """
+    )
+
+    emails = cursor.fetchall()
+    print("Failed emails are", emails)
+
+    conn.close()
+    return emails
+
+
+def get_totalemails_count():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(recipient)
+        FROM emails
+        """
+    )
+
+    total_emails = cursor.fetchone()[0]
+
+    conn.close()
+    return total_emails
+
+
+def scheduled_emails_count():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT COUNT(status)
+        FROM emails
+        WHERE status = 'Pending'
+        """
+    )
+
+    scheduled_emails = cursor.fetchone()[0]
+
+    conn.close()
+    return scheduled_emails
+
+
+def get_allemails():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM emails")
+    rows = cursor.fetchall()
+
+    conn.close()
+    return rows
+
+
+def create_smtp_table():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS smtp_settings(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            smtp_host TEXT NOT NULL,
+            smtp_port INTEGER NOT NULL,
+            sender_email TEXT NOT NULL,
+            app_password TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def save_smtp_settings(host, port, email, password):
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    encrypted_password = encrypt(password)
+
+    created_at = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+    cursor.execute(
+        """
+        INSERT INTO smtp_settings(
+            smtp_host,
+            smtp_port,
+            sender_email,
+            app_password,
+            created_at
+        )
+        VALUES(?,?,?,?,?)
+        """,
+        (host, port, email, encrypted_password, created_at),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_smtp_settings():
+    conn = sqlite3.connect(EMAILS_DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            smtp_host,
+            smtp_port,
+            sender_email,
+            app_password,
+            created_at
+        FROM smtp_settings
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+
+    settings = cursor.fetchone()
+
+    conn.close()
+    return settings
