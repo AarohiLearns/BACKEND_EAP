@@ -1,0 +1,541 @@
+{% extends "layout.html" %}
+
+{% block title %}
+Compose Mail
+{% endblock %}
+
+{% block content %}
+<style>
+.file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.remove-file-btn {
+    border: none;
+    background: #dc3545;
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+</style>
+<div class="app-content-header">
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-sm-6">
+                <h3 class="mb-0">Compose Message</h3>
+            </div>
+            <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                    <li class="breadcrumb-item">
+                        <a href="{{ url_for('dashboard') }}">Home</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="#">Mailbox</a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">Compose</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="app-content">
+    <div class="container-fluid">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">New Message</h3>
+            </div>
+            <div class="card-body">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category }}">
+                                {{ message }}
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <form
+                    class="row g-3"
+                    method="POST"
+                    action="{{ url_for('compose') }}"
+                    enctype="multipart/form-data"
+                >
+                    <div class="col-12">
+                        <label class="form-label" for="mail-to">To</label>
+                        <input
+                            type="email"
+                            class="form-control"
+                            id="mail-to"
+                            name="recipient"
+                            placeholder="recipient@example.com"
+                            required
+                        />
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label">Email Template</label>
+                        <select
+                            class="form-select"
+                            id="template"
+                            name="template"
+                        >
+                            <option value="" selected disabled>
+                                Select Template
+                            </option>
+                            {% for template in templates %}
+                                <option value="{{ template.name }}">
+                                    Template {{ template.id }}: {{ template.name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="col-12">
+                        <div id="template-fields"></div>
+                    </div>
+
+                    <div class="col-12">
+                        <button
+                            type="button"
+                            class="btn btn-info"
+                            id="generate-email"
+                        >
+                            Generate Email
+                        </button>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="mail-subject">Subject</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="mail-subject"
+                            name="subject"
+                            value="{{ selected_template.subject if selected_template else '' }}"
+                        />
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="mail-body">Message</label>
+                        <textarea
+                            id="mail-body"
+                            name="message"
+                            class="form-control"
+                            rows="12"
+                            placeholder="Write your message…"
+                            style="min-height: 16rem"
+                        >{{ selected_template.body if selected_template else '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="mail-attach">Attachments</label><br>
+                        <div class="form-check mb-2">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="attach_document"
+                                name="attach_document"
+                            >
+                            <label class="form-check-label" for="attach_document">
+                                Attach latest report from Reports folder
+                            </label>
+                        </div>
+
+                        <div id="attachment-upload">
+                        <input
+                            type="file"
+                            class="form-control"
+                            id="mail-attach"
+                            name="attachments"
+                            multiple
+                        >
+                    </div>
+
+                    <!-- Hidden input that will hold all accumulated files -->
+                    <input
+                        type="file"
+                        id="mail-attach-accumulator"
+                        name="attachments"
+                        multiple
+                        style="display:none"
+                    >
+
+                    <!-- List of selected files -->
+                    <div id="selected-files-list" class="mt-2"></div>
+
+                    <div
+                        id="auto-report-msg"
+                        class="alert alert-success py-2 mt-2"
+                        style="display:none"
+                    >
+                        📁 Latest report will be attached automatically from the Reports folder.
+                    </div>
+                    </div>
+
+                    <div class="d-flex justify-content-center row gap-3 mt-3">
+                        <div class="col-md-5 pe-2">
+                            <label>Schedule Date</label>
+                            <input
+                                type="date"
+                                id="schedule-date"
+                                class="form-control"
+                                name="date"
+                                required
+                            />
+                        </div>
+
+                        <div class="col-md-5 pe-2">
+                            <label>Schedule Time</label>
+                            <input
+                                type="time"
+                                id="schedule-time"
+                                class="form-control"
+                                name="time"
+                                required
+                            />
+                        </div>
+
+                        <div class="col-md-5 pe-2">
+                            <label>Repeat Interval</label>
+                            <select
+                                class="form-select"
+                                id="repeat_interval"
+                                name="repeat_interval"
+                            >
+                                <option value="Never" selected>Never</option>
+                                <option value="Hourly">Hourly</option>
+                                <option value="Daily">Daily</option>
+                                <option value="Weekly">Weekly</option>
+                                <option value="Custom">Custom (Minutes)</option>
+                            </select>
+
+                            <input
+                                type="number"
+                                class="form-control mt-2"
+                                id="custom_interval"
+                                placeholder="Enter minutes (minimum 15)"
+                                min="15"
+                                step="1"
+                                style="display:none;"
+                            >
+                        </div>
+
+                        <div class="col-md-5 pe-2" id="end-date-div">
+                            <label>End Date</label>
+                            <input
+                                type="date"
+                                id="end-date"
+                                class="form-control"
+                                name="end_date"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-center gap-3 mt-4">
+                        <button
+                            type="submit"
+                            class="btn btn-secondary"
+                            id="send-now"
+                            formaction="{{ url_for('send_now') }}"
+                        >
+                            Send Now
+                        </button>
+
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                            id="schedule-btn"
+                        >
+                            Schedule Email
+                        </button>
+                    </div>
+
+                    <br>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- 1. Store the Jinja data safely in a JSON script tag that VS Code ignores -->
+<script id="templates-data" type="application/json">
+    {{ templates|tojson }}
+</script>
+
+<script>
+// 2. Read and parse the data natively in JavaScript
+const templatesDataElement = document.getElementById("templates-data");
+const templates = JSON.parse(templatesDataElement.textContent);
+const dropdown = document.getElementById("template");
+const subject = document.getElementById("mail-subject");
+const body = document.getElementById("mail-body");
+const fieldsDiv = document.getElementById("template-fields");
+const generateBtn = document.getElementById("generate-email");
+
+let selectedTemplate = null;
+let fields = [];
+
+// Helper: sanitize field name for use as HTML id
+function sanitizeId(name) {
+    return name
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
+}
+
+dropdown.addEventListener("change", function () {
+    selectedTemplate = templates.find(t => t.name === this.value);
+
+    fieldsDiv.innerHTML = "";
+    fields = [];
+
+    if (!selectedTemplate) {
+        return;
+    }
+
+    const placeholderRegex = /\{\{\s*(.*?)\s*\}\}/g;
+
+    const subjectMatches = [...(selectedTemplate.subject || "").matchAll(placeholderRegex)];
+    const bodyMatches = [...(selectedTemplate.body || "").matchAll(placeholderRegex)];
+
+    const allMatches = [...subjectMatches, ...bodyMatches];
+
+    fields = [
+        ...new Set(
+            allMatches.map(m => m[1])
+        )
+    ];
+
+    fields.forEach(field => {
+        const fieldId = sanitizeId(field);
+        fieldsDiv.innerHTML += `
+            <div class="mb-3">
+                <label class="form-label">
+                    ${field.toUpperCase()}
+                </label>
+                <input
+                    type="text"
+                    class="form-control"
+                    id="${fieldId}"
+                    data-field-name="${field}"
+                    placeholder="Enter ${field}"
+                >
+            </div>
+        `;
+    });
+});
+
+generateBtn.addEventListener("click", function (e) {
+    e.preventDefault();
+
+    if (!selectedTemplate) {
+        alert("Please select a template first");
+        return;
+    }
+
+    let generatedSubject = selectedTemplate.subject || "";
+    let generatedBody = selectedTemplate.body || "";
+
+    fields.forEach(field => {
+        const fieldId = sanitizeId(field);
+        const input = document.getElementById(fieldId);
+        const value = input ? input.value : "";
+
+        const placeholder = new RegExp(
+            "\\{\\{\\s*" + field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\}\\}",
+            "g"
+        );
+
+        generatedSubject = generatedSubject.replace(placeholder, value);
+        generatedBody = generatedBody.replace(placeholder, value);
+    });
+
+    subject.value = generatedSubject;
+    body.value = generatedBody;
+});
+
+const dateInput = document.getElementById("schedule-date");
+const timeInput = document.getElementById("schedule-time");
+
+// --- Multi-file attachment accumulator ---
+const attachInput = document.getElementById("mail-attach");
+const accumulator = document.getElementById("mail-attach-accumulator");
+const selectedFilesList = document.getElementById("selected-files-list");
+
+// Visible input should not submit directly
+attachInput.removeAttribute("name");
+
+function appendFiles(newFiles) {
+    const dt = new DataTransfer();
+
+    // Add existing files from accumulator
+    for (const file of accumulator.files) {
+        dt.items.add(file);
+    }
+
+    // Add newly selected files
+    for (const file of newFiles) {
+        dt.items.add(file);
+    }
+
+    accumulator.files = dt.files;
+}
+
+// Render the list of files in the accumulator
+function renderFileList() {
+    selectedFilesList.innerHTML = "";
+
+    const files = accumulator.files;
+
+    if (!files || files.length === 0) {
+        return;
+    }
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        const row = document.createElement("div");
+        row.className = "file-item";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "file-name";
+        nameSpan.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "remove-file-btn";
+        removeBtn.textContent = "×";
+        removeBtn.title = "Remove this file";
+
+        removeBtn.addEventListener("click", function () {
+            removeFileByIndex(i);
+        });
+
+        row.appendChild(nameSpan);
+        row.appendChild(removeBtn);
+        selectedFilesList.appendChild(row);
+    }
+}
+
+// Remove a file at a specific index from the accumulator
+function removeFileByIndex(indexToRemove) {
+    const dt = new DataTransfer();
+
+    for (let i = 0; i < accumulator.files.length; i++) {
+        if (i === indexToRemove) {
+            continue; // skip this file
+        }
+        dt.items.add(accumulator.files[i]);
+    }
+
+    accumulator.files = dt.files;
+    renderFileList();
+}
+
+attachInput.addEventListener("change", function () {
+    if (this.files && this.files.length) {
+        appendFiles(this.files);
+        this.value = "";
+        renderFileList(); // show updated list
+    }
+});
+// -----------------------------------------
+document.getElementById("send-now").addEventListener("click", function () {
+    dateInput.required = false;
+    timeInput.required = false;
+});
+
+document.getElementById("schedule-btn").addEventListener("click", function () {
+    dateInput.required = true;
+    timeInput.required = true;
+});
+
+// attachment
+const reportCheckbox = document.getElementById("attach_document");
+const uploadDiv = document.getElementById("attachment-upload");
+const msg = document.getElementById("auto-report-msg");
+
+reportCheckbox.addEventListener("change", function () {
+    if (this.checked) {
+        uploadDiv.style.display = "none";
+        msg.style.display = "block";
+    } else {
+        uploadDiv.style.display = "block";
+        msg.style.display = "none";
+    }
+});
+
+const repeat = document.querySelector("#repeat_interval"); // Updated selector
+const endDateDiv = document.getElementById("end-date-div");
+
+endDateDiv.style.display = "none";
+
+repeat.addEventListener("change", function () {
+    if (this.value === "Never") {
+        endDateDiv.style.display = "none";
+    } else {
+        endDateDiv.style.display = "block";
+    }
+});
+
+// Custom interval integration
+const repeatInterval = document.getElementById("repeat_interval");
+const customInterval = document.getElementById("custom_interval");
+
+repeatInterval.addEventListener("change", function () {
+    if (this.value === "Custom") {
+        customInterval.style.display = "block";
+        customInterval.required = true;
+        endDateDiv.style.display = "block";
+    } else {
+        customInterval.style.display = "none";
+        customInterval.required = false;
+        customInterval.value = "";
+    }
+});
+
+const composeForm = document.querySelector("form");
+
+composeForm.addEventListener("submit", function (event) {
+    if (repeatInterval.value === "Custom") {
+        const minutes = Number(customInterval.value);
+
+        if (!minutes || !Number.isInteger(minutes) || minutes < 15) {
+            event.preventDefault();
+            alert("Custom interval must be a whole number of minutes, minimum 15.");
+            customInterval.focus();
+            return;
+        }
+
+        // CORRECTED LOGIC: 
+        // Pydantic `models.py` expects the raw number of minutes for custom intervals.
+        // We swap the 'name' attributes right before submit so the backend receives 
+        // the number (e.g. "15") instead of the word "Custom".
+        repeatInterval.removeAttribute("name");
+        customInterval.setAttribute("name", "repeat_interval");
+    } else {
+        // Reset the attributes in case the user toggles back and forth before submitting
+        repeatInterval.setAttribute("name", "repeat_interval");
+        customInterval.removeAttribute("name");
+    }
+});
+</script>
+{% endblock %}
